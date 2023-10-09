@@ -1,50 +1,12 @@
 pub use cudarc::cublaslt::Activation;
 
 use candle::backend::BackendStorage;
-use candle::cuda_backend::cudarc::driver::{
-    CudaSlice, CudaView, DevicePtr, DevicePtrMut, DeviceSlice,
-};
 use candle::cuda_backend::WrapErr;
 use candle::{CpuStorage, Device, Layout, Result, Shape, Tensor};
 use half::f16;
 use std::sync::Arc;
 
 use cudarc::cublaslt::{CudaBlasLT, Matmul, MatmulConfig};
-use cudarc::driver::sys::CUdeviceptr;
-use cudarc::driver::{
-    CudaDevice, DevicePtr as CudarcDevicePtr, DevicePtrMut as CudarcDevicePtrMut,
-    DeviceSlice as CudarcDeviceSlice,
-};
-
-/// Wrap as Candle and this layer rely on different versions of cudarc
-struct DevicePointerWrapper<'a, T>(CudaView<'a, T>);
-
-impl<T> CudarcDeviceSlice<T> for DevicePointerWrapper<'_, T> {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl<T> CudarcDevicePtr<T> for DevicePointerWrapper<'_, T> {
-    fn device_ptr(&self) -> &CUdeviceptr {
-        self.0.device_ptr()
-    }
-}
-
-/// Wrap as Candle and this layer rely on different versions of cudarc
-struct DevicePointerMutWrapper<'a, T>(&'a mut CudaSlice<T>);
-
-impl<T> CudarcDeviceSlice<T> for DevicePointerMutWrapper<'_, T> {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl<T> CudarcDevicePtrMut<T> for DevicePointerMutWrapper<'_, T> {
-    fn device_ptr_mut(&mut self) -> &mut CUdeviceptr {
-        self.0.device_ptr_mut()
-    }
-}
 
 pub struct CublasLTMatmul {
     pub cublaslt: Arc<CudaBlasLT>,
@@ -56,18 +18,13 @@ pub struct CublasLt(Arc<CudaBlasLT>);
 
 impl CublasLt {
     pub fn new(device: &Device) -> Result<Self> {
-        let _dev = match &*device {
+        let dev = match &*device {
             Device::Cpu => candle::bail!("Not supported on CPU device"),
             Device::Cuda(d) => d,
         };
 
-        // FIXME: Force to create a new device instead of using the candle one as candle
-        //  and this layer rely on different versions of cudarc while the cublaslt PR on cudarc
-        //  get merged.
-        // let inner = CudaBlasLT::new(dev.cuda_device()).unwrap();
+        let inner = CudaBlasLT::new(dev.cuda_device()).unwrap();
 
-        let dev = CudaDevice::new(0).unwrap();
-        let inner = CudaBlasLT::new(dev).unwrap();
         Ok(Self(Arc::new(inner)))
     }
 }
@@ -122,9 +79,7 @@ impl CublasLTMatmul {
                 candle::bail!("Bias does not have the correct shape");
             }
 
-            Some(DevicePointerWrapper(
-                bias.as_cuda_slice::<f16>()?.slice(bias_l.start_offset()..),
-            ))
+            Some(bias.as_cuda_slice::<f16>()?.slice(bias_l.start_offset()..))
         } else {
             None
         };
@@ -134,14 +89,7 @@ impl CublasLTMatmul {
 
         unsafe {
             self.cublaslt
-                .matmul(
-                    config,
-                    &DevicePointerWrapper(a),
-                    &DevicePointerWrapper(b),
-                    &mut DevicePointerMutWrapper(&mut out),
-                    bias.as_ref(),
-                    self.act.as_ref(),
-                )
+                .matmul(config, &a, &b, &mut out, bias.as_ref(), self.act.as_ref())
                 .map_err(|e| candle::Error::Cuda(Box::new(e)))?;
         }
 
