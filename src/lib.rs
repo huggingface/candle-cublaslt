@@ -3,7 +3,7 @@ pub use cudarc::cublaslt::Activation;
 use candle::backend::BackendStorage;
 use candle::cuda_backend::WrapErr;
 use candle::{CpuStorage, Device, Layout, Result, Shape, Tensor};
-use half::f16;
+use half::{bf16, f16};
 use std::sync::Arc;
 
 use cudarc::cublaslt::{CudaBlasLT, Matmul, MatmulConfig};
@@ -30,9 +30,7 @@ impl CublasLt {
 }
 
 impl CublasLTMatmul {
-    pub fn fwd<
-        T: candle::cuda_backend::CudaDType + candle::cuda_backend::cudarc::driver::DeviceRepr,
-    >(
+    pub fn fwd_f16(
         &self,
         a: &candle::CudaStorage,
         a_l: &Layout,
@@ -97,6 +95,138 @@ impl CublasLTMatmul {
 
         Ok((out, out_shape))
     }
+
+    pub fn fwd_bf16(
+        &self,
+        a: &candle::CudaStorage,
+        a_l: &Layout,
+        b: &candle::CudaStorage,
+        b_l: &Layout,
+        bias: Option<&candle::CudaStorage>,
+        bias_l: Option<&Layout>,
+    ) -> Result<(candle::CudaStorage, Shape)> {
+        let dev = a.device();
+
+        // Assume TN
+        let m = a_l.dims()[0];
+        let k = a_l.dims()[1];
+        let n = b_l.dims()[0];
+
+        if b_l.dims()[1] != k {
+            candle::bail!("This layer only supports TN layout");
+        }
+
+        let lda = k;
+        let ldb = k;
+        let ldc = m;
+
+        let out_shape = Shape::from((n, m));
+
+        let config = MatmulConfig {
+            transa: true,
+            transb: false,
+            m: m as u64,
+            n: n as u64,
+            k: k as u64,
+            alpha: 1.0,
+            lda: lda as i64,
+            ldb: ldb as i64,
+            beta: 0.0,
+            ldc: ldc as i64,
+        };
+
+        let a = a.as_cuda_slice::<bf16>()?.slice(a_l.start_offset()..);
+        let b = b.as_cuda_slice::<bf16>()?.slice(b_l.start_offset()..);
+
+        let bias = if let (Some(bias), Some(bias_l)) = (bias, bias_l) {
+            if bias_l.dims()[0] != m {
+                candle::bail!("Bias does not have the correct shape");
+            }
+
+            Some(bias.as_cuda_slice::<bf16>()?.slice(bias_l.start_offset()..))
+        } else {
+            None
+        };
+
+        // Allocate out tensor
+        let mut out = unsafe { dev.alloc::<bf16>(out_shape.elem_count()).w()? };
+
+        unsafe {
+            self.cublaslt
+                .matmul(config, &a, &b, &mut out, bias.as_ref(), self.act.as_ref())
+                .map_err(|e| candle::Error::Cuda(Box::new(e)))?;
+        }
+
+        let out = candle::CudaStorage::wrap_cuda_slice(out, dev.clone());
+
+        Ok((out, out_shape))
+    }
+
+    pub fn fwd_f32(
+        &self,
+        a: &candle::CudaStorage,
+        a_l: &Layout,
+        b: &candle::CudaStorage,
+        b_l: &Layout,
+        bias: Option<&candle::CudaStorage>,
+        bias_l: Option<&Layout>,
+    ) -> Result<(candle::CudaStorage, Shape)> {
+        let dev = a.device();
+
+        // Assume TN
+        let m = a_l.dims()[0];
+        let k = a_l.dims()[1];
+        let n = b_l.dims()[0];
+
+        if b_l.dims()[1] != k {
+            candle::bail!("This layer only supports TN layout");
+        }
+
+        let lda = k;
+        let ldb = k;
+        let ldc = m;
+
+        let out_shape = Shape::from((n, m));
+
+        let config = MatmulConfig {
+            transa: true,
+            transb: false,
+            m: m as u64,
+            n: n as u64,
+            k: k as u64,
+            alpha: 1.0,
+            lda: lda as i64,
+            ldb: ldb as i64,
+            beta: 0.0,
+            ldc: ldc as i64,
+        };
+
+        let a = a.as_cuda_slice::<f32>()?.slice(a_l.start_offset()..);
+        let b = b.as_cuda_slice::<f32>()?.slice(b_l.start_offset()..);
+
+        let bias = if let (Some(bias), Some(bias_l)) = (bias, bias_l) {
+            if bias_l.dims()[0] != m {
+                candle::bail!("Bias does not have the correct shape");
+            }
+
+            Some(bias.as_cuda_slice::<f32>()?.slice(bias_l.start_offset()..))
+        } else {
+            None
+        };
+
+        // Allocate out tensor
+        let mut out = unsafe { dev.alloc::<f32>(out_shape.elem_count()).w()? };
+
+        unsafe {
+            self.cublaslt
+                .matmul(config, &a, &b, &mut out, bias.as_ref(), self.act.as_ref())
+                .map_err(|e| candle::Error::Cuda(Box::new(e)))?;
+        }
+
+        let out = candle::CudaStorage::wrap_cuda_slice(out, dev.clone());
+
+        Ok((out, out_shape))
+    }
 }
 
 impl candle::CustomOp2 for CublasLTMatmul {
@@ -122,9 +252,10 @@ impl candle::CustomOp2 for CublasLTMatmul {
         b_l: &Layout,
     ) -> Result<(candle::CudaStorage, Shape)> {
         match a.dtype() {
-            candle::DType::F16 => self.fwd::<f16>(a, a_l, b, b_l, None, None),
-            candle::DType::BF16 => candle::bail!("not implemented"),
-            dt => candle::bail!("flash-attn is only supported for f16 ({dt:?})"),
+            candle::DType::F16 => self.fwd_f16(a, a_l, b, b_l, None, None),
+            candle::DType::BF16 => self.fwd_bf16(a, a_l, b, b_l, None, None),
+            candle::DType::F32 => self.fwd_f32(a, a_l, b, b_l, None, None),
+            dt => candle::bail!("cublaslt-matmul is only supported for f16/bf16/f32 ({dt:?})"),
         }
     }
 }
@@ -156,9 +287,10 @@ impl candle::CustomOp3 for CublasLTMatmul {
         bias_l: &Layout,
     ) -> Result<(candle::CudaStorage, Shape)> {
         match a.dtype() {
-            candle::DType::F16 => self.fwd::<f16>(a, a_l, b, b_l, Some(bias), Some(bias_l)),
-            candle::DType::BF16 => candle::bail!("not implemented"),
-            dt => candle::bail!("flash-attn is only supported for f16 ({dt:?})"),
+            candle::DType::F16 => self.fwd_f16(a, a_l, b, b_l, Some(bias), Some(bias_l)),
+            candle::DType::BF16 => self.fwd_bf16(a, a_l, b, b_l, Some(bias), Some(bias_l)),
+            candle::DType::F32 => self.fwd_f32(a, a_l, b, b_l, Some(bias), Some(bias_l)),
+            dt => candle::bail!("cublaslt-matmul is only supported for f16/bf16/f32 ({dt:?})"),
         }
     }
 }
