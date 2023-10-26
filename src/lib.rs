@@ -29,6 +29,8 @@ pub struct CublasLTMatmul {
     pub cublaslt: Arc<CudaBlasLT>,
     pub act: Option<Activation>,
     pub c: Option<Tensor>,
+    pub alpha: Option<f32>,
+    pub beta: Option<f32>,
 }
 
 impl CublasLTMatmul {
@@ -71,7 +73,7 @@ impl CublasLTMatmul {
             None
         };
 
-        let (mut out, beta) = if let Some(c) = &self.c {
+        let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -92,17 +94,11 @@ impl CublasLTMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), 1.0)
+            c.clone()
         } else {
             // Allocate out tensor
-            (
-                unsafe { dev.alloc::<f16>(out_shape.elem_count()).w()? },
-                0.0,
-            )
+            unsafe { dev.alloc::<f16>(out_shape.elem_count()).w()? }
         };
-
-        // let mut out = unsafe { dev.alloc::<f16>(out_shape.elem_count()).w()? };
 
         let config = MatmulConfig {
             transa: true,
@@ -110,10 +106,10 @@ impl CublasLTMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: None,
             stride_b: None,
@@ -172,7 +168,7 @@ impl CublasLTMatmul {
             None
         };
 
-        let (mut out, beta) = if let Some(c) = &self.c {
+        let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -193,14 +189,10 @@ impl CublasLTMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), 1.0)
+            c.clone()
         } else {
             // Allocate out tensor
-            (
-                unsafe { dev.alloc::<bf16>(out_shape.elem_count()).w()? },
-                0.0,
-            )
+            unsafe { dev.alloc::<bf16>(out_shape.elem_count()).w()? }
         };
 
         let config = MatmulConfig {
@@ -209,10 +201,10 @@ impl CublasLTMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: None,
             stride_b: None,
@@ -271,7 +263,7 @@ impl CublasLTMatmul {
             None
         };
 
-        let (mut out, beta) = if let Some(c) = &self.c {
+        let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -292,14 +284,10 @@ impl CublasLTMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), 1.0)
+            c.clone()
         } else {
             // Allocate out tensor
-            (
-                unsafe { dev.alloc::<f32>(out_shape.elem_count()).w()? },
-                0.0,
-            )
+            unsafe { dev.alloc::<f32>(out_shape.elem_count()).w()? }
         };
 
         let config = MatmulConfig {
@@ -308,10 +296,10 @@ impl CublasLTMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: None,
             stride_b: None,
@@ -405,7 +393,9 @@ impl candle::CustomOp3 for CublasLTMatmul {
 /// * `a` - Input tensor of size MxK
 /// * `b` - Input tensor of size NxK
 /// * `out` - Optional Output tensor of size NxK.
-///           If set, will be added to the end result of (A*B) before `act`
+///           If set and beta != 0, will be added to the end result of A*B before `act`
+/// * `alpha` - Optional scaling factor for A*B
+/// * `beta` - Optional scaling factor for C
 /// * `bias` - Optional bias tensor of size M
 /// * `act` - Optional Gelu or Relu activation. If set, will be added to the end result
 /// * `cublaslt` - CublasLt handle
@@ -415,6 +405,8 @@ pub fn fused_matmul(
     a: &Tensor,
     b: &Tensor,
     out: Option<&Tensor>,
+    alpha: Option<f32>,
+    beta: Option<f32>,
     bias: Option<&Tensor>,
     act: Option<Activation>,
     cublaslt: CublasLt,
@@ -423,6 +415,8 @@ pub fn fused_matmul(
         act,
         cublaslt: cublaslt.0,
         c: out.cloned(),
+        alpha,
+        beta,
     };
 
     if let Some(bias) = bias {
@@ -436,6 +430,8 @@ pub struct CublasLTBatchMatmul {
     pub cublaslt: Arc<CudaBlasLT>,
     pub act: Option<Activation>,
     pub c: Option<Tensor>,
+    pub alpha: Option<f32>,
+    pub beta: Option<f32>,
 }
 
 impl CublasLTBatchMatmul {
@@ -481,7 +477,7 @@ impl CublasLTBatchMatmul {
             None
         };
 
-        let (mut out, stride_c, beta) = if let Some(c) = &self.c {
+        let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -503,14 +499,13 @@ impl CublasLTBatchMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), c_l.stride()[0], 1.0)
+            // Set beta to 0.0 if it is not set
+            (c.clone(), c_l.stride()[0])
         } else {
             // Allocate out tensor
             (
                 unsafe { dev.alloc::<f16>(out_shape.elem_count()).w()? },
                 (n * m),
-                0.0,
             )
         };
 
@@ -520,10 +515,10 @@ impl CublasLTBatchMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: Some(a_l.stride()[0] as i64),
             stride_b: Some(b_l.stride()[0] as i64),
@@ -585,7 +580,7 @@ impl CublasLTBatchMatmul {
             None
         };
 
-        let (mut out, stride_c, beta) = if let Some(c) = &self.c {
+        let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -607,14 +602,13 @@ impl CublasLTBatchMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), c_l.stride()[0], 1.0)
+            // Set beta to 0.0 if it is not set
+            (c.clone(), c_l.stride()[0])
         } else {
             // Allocate out tensor
             (
                 unsafe { dev.alloc::<bf16>(out_shape.elem_count()).w()? },
                 (n * m),
-                0.0,
             )
         };
 
@@ -624,10 +618,10 @@ impl CublasLTBatchMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: Some(a_l.stride()[0] as i64),
             stride_b: Some(b_l.stride()[0] as i64),
@@ -689,7 +683,7 @@ impl CublasLTBatchMatmul {
             None
         };
 
-        let (mut out, stride_c, beta) = if let Some(c) = &self.c {
+        let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
                 Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
@@ -711,14 +705,13 @@ impl CublasLTBatchMatmul {
                 candle::bail!("`c` does not have the correct shape");
             }
 
-            // Set beta to 1.0
-            (c.clone(), c_l.stride()[0], 1.0)
+            // Set beta to 0.0 if it is not set
+            (c.clone(), c_l.stride()[0])
         } else {
             // Allocate out tensor
             (
                 unsafe { dev.alloc::<f32>(out_shape.elem_count()).w()? },
                 (n * m),
-                0.0,
             )
         };
 
@@ -728,10 +721,10 @@ impl CublasLTBatchMatmul {
             m: m as u64,
             n: n as u64,
             k: k as u64,
-            alpha: 1.0,
+            alpha: self.alpha.unwrap_or(1.0),
             lda: lda as i64,
             ldb: ldb as i64,
-            beta,
+            beta: self.beta.unwrap_or(0.0),
             ldc: ldc as i64,
             stride_a: Some(a_l.stride()[0] as i64),
             stride_b: Some(b_l.stride()[0] as i64),
@@ -829,7 +822,9 @@ impl candle::CustomOp3 for CublasLTBatchMatmul {
 /// * `a` - Input tensor of size BxMxK
 /// * `b` - Input tensor of size BxNxK
 /// * `out` - Optional Output tensor of size BxNxK.
-///           If set, will be added to the end result of (A*B) before `act`
+///           If set and beta != 0, will be added to the end result of A*B before `act`
+/// * `alpha` - Optional scaling factor for A*B
+/// * `beta` - Optional scaling factor for C
 /// * `bias` - Optional bias tensor of size M
 /// * `act` - Optional Gelu or Relu activation. If set, will be added to the end result
 /// * `cublaslt` - CublasLt handle
@@ -839,6 +834,8 @@ pub fn fused_batch_matmul(
     a: &Tensor,
     b: &Tensor,
     out: Option<&Tensor>,
+    alpha: Option<f32>,
+    beta: Option<f32>,
     bias: Option<&Tensor>,
     act: Option<Activation>,
     cublaslt: CublasLt,
@@ -847,6 +844,8 @@ pub fn fused_batch_matmul(
         act,
         cublaslt: cublaslt.0,
         c: out.cloned(),
+        alpha,
+        beta,
     };
 
     if let Some(bias) = bias {
@@ -895,7 +894,7 @@ mod tests {
 
         let cublaslt = CublasLt::new(&device)?;
 
-        let res = fused_matmul(&a, &b, None, Some(&bias), None, cublaslt)?;
+        let res = fused_matmul(&a, &b, None, None, None, Some(&bias), None, cublaslt)?;
         let expected = (b.matmul(&a.t()?)? + bias.broadcast_left(2)?)?;
 
         assert_eq!(
@@ -916,7 +915,16 @@ mod tests {
 
         let cublaslt = CublasLt::new(&device)?;
 
-        let res = fused_batch_matmul(&a, &b, Some(&c), Some(&bias), None, cublaslt)?;
+        let res = fused_batch_matmul(
+            &a,
+            &b,
+            Some(&c),
+            None,
+            Some(1.0),
+            Some(&bias),
+            None,
+            cublaslt,
+        )?;
         let expected = (b.matmul(&a.t()?)?.add(&c)? + bias.broadcast_left((3, 2))?)?;
 
         assert_eq!(
