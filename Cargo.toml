@@ -7,11 +7,11 @@ description = "CUBLASLt gemm for the candle ML framework."
 
 [dependencies]
 candle = { version = "0.3.0", package = "candle-core", features = ["cuda"]}
-cudarc = { git = "https://github.com/OlivierDehaene/cudarc", rev = "4c8e6d36a4a4c31e2e4649ae5246226452a01fc1", default-features = false, features = [ "cublaslt", "f16" ]}
+cudarc = { git = "https://github.com/OlivierDehaene/cudarc", rev = "8be6ff46e4a2014fb563570e0d206c09aea88152", default-features = false, features = [ "cublaslt", "f16" ]}
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-cudarc = { git = "https://github.com/OlivierDehaene/cudarc", rev = "4c8e6d36a4a4c31e2e4649ae5246226452a01fc1" }
+cudarc = { git = "https://github.com/OlivierDehaene/cudarc", rev = "8be6ff46e4a2014fb563570e0d206c09aea88152" }
 
 [features]
 default = []
