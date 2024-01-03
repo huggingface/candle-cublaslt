@@ -15,8 +15,8 @@ pub struct CublasLt(Arc<CudaBlasLT>);
 impl CublasLt {
     pub fn new(device: &Device) -> Result<Self> {
         let dev = match &*device {
-            Device::Cpu => candle::bail!("Not supported on CPU device"),
             Device::Cuda(d) => d,
+            _ => candle::bail!("`device` must be a `cuda` device"),
         };
 
         let inner = CudaBlasLT::new(dev.cuda_device()).unwrap();
@@ -76,8 +76,8 @@ impl CublasLTMatmul {
         let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<f16>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
@@ -171,8 +171,8 @@ impl CublasLTMatmul {
         let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<bf16>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
@@ -266,8 +266,8 @@ impl CublasLTMatmul {
         let mut out = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<f32>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
@@ -480,8 +480,8 @@ impl CublasLTBatchMatmul {
         let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<f16>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
@@ -583,8 +583,8 @@ impl CublasLTBatchMatmul {
         let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<bf16>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
@@ -686,8 +686,8 @@ impl CublasLTBatchMatmul {
         let (mut out, stride_c) = if let Some(c) = &self.c {
             let (c, c_l) = c.storage_and_layout();
             let c = match &*c {
-                Storage::Cpu(_) => candle::bail!("`c` must be a cuda tensor"),
                 Storage::Cuda(storage) => storage.as_cuda_slice::<f32>()?,
+                _ => candle::bail!("`c` must be a cuda tensor"),
             };
             match c_l.contiguous_offsets() {
                 Some((o1, o2)) => {
